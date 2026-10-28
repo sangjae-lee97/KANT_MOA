@@ -84,3 +84,23 @@ web release는 `~/kant-moa/web-releases/web-20261027T231624Z-cf82ef7`이며,
 - OpenAPI servers `/api`, 상대 인증 경로 `auth/login` 확인. 공통 회귀 검사 2개 통과.
 - 실제 브라우저에서 원본 이미지·회원가입→자동 로그인→상품 찜→새로고침 유지 확인.
 - 이 결과는 로컬 검증이며 학원 서버 배포 완료를 의미하지 않는다.
+
+## 최신 운영 반영 완료 (2026-10-28)
+
+아래는 사용자의 SSH 실행 결과로 확인한 후속 운영 상태다. 위 최초 배포 기록과 구분한다.
+
+- `LATEST_MAIN_DEPLOY_SUCCESS`, `INTERNAL_DB_DEPLOY_SUCCESS`, `SSH_EXIT=0`, rollback 없음.
+- API·프론트 애플리케이션 커밋: `e0c7ad8f3f0d551d4b849fa513db34acffcda0a0` (PR #85 포함).
+- 배포 소스 SHA256: `dabcb253bfd3c7cf44c55bcb2896e7e084d39907cabb15ec50c2ee6c1b6dd298`.
+- release: `/home/kant/kant-moa/internal-releases/main-20261028T090748285927Z-e0c7ad8`.
+- 이전 이미지·활성 설정·DB 지문 백업: `/home/kant/kant-moa/internal-db-state/main-20261028T090748285927Z-e0c7ad8`.
+- 후보·내부·공개 검증: 공개 상품 388개, OpenAPI 경로 51개, Google 설정 보존, 보호 API 미인증 401.
+- `/forgot-password`·`/reset-password` 200, 비밀번호 재설정 API 2개 등록 확인.
+- `PASSWORD_RESET_DEMO=false` 유지. 메일 발송은 미구현이므로 이 기록을 실제 회원의 비밀번호 찾기 전달 경로 완성으로 표시하지 않는다.
+- 후보·내부·공개 칸트봇 실제 AI 답변 200. 기존 서버 Gemini 키를 보존하고 재입력하지 않았다.
+- API→DB는 `172.22.0.1:5432 / kant-moa`, 같은 DB·DB 지문 보존. 추가 migration·초기 SQL·시드는 실행하지 않았다.
+- 기존 JWT·Google 설정·원본 assets/uploads 마운트·프록시 컨테이너를 유지했다.
+- 이번 도구는 `deploy_latest_site.py`가 기존 후보·전환/복구 도구를 재사용한다. 도구·운영 문서의 미커밋 변경과 애플리케이션 main 커밋을 구분한다.
+
+후속 배포는 `~/kant-moa/active-site.json`의 `api_override`와 `web_override`를 함께 읽는다.
+이전 API 단독 Compose를 실행하거나 실패 시 DB를 자동 복원하지 않는다.

@@ -1,6 +1,6 @@
 # P2 5단계 · 상품 목록·검색·상세 API
 
-2026-10-27 KST. 로컬 구현·검증 완료. 공용 서버 배포·프론트 연결은 별도다.
+2026-10-27 KST. 로컬 구현·검증·공용 서버 API 배포 완료. 프론트 연결은 후속이다.
 
 ## 구현 범위
 
@@ -89,6 +89,32 @@ uv run pytest tests/products/test_catalog_api.py -q
 ## 변경 경계·다음 단계
 
 - 공통 파일 변경은 `backend/src/main.py`의 상품 라우터 import·등록 **2줄**이며 P1 리뷰 때 공유한다.
-- 공용 DB 데이터·스키마·Alembic 이력·서버 실행 코드는 이번 단계에서 변경하지 않았다.
-- 커밋·push·배포는 수행하지 않았다. 공개 ngrok 주소에 이번 API가 배포됐다는 의미가 아니다.
+- 공용 DB 데이터·스키마·Alembic 이력은 변경하지 않았다.
+- [PR #57](https://github.com/hiju200208-png/KANT_MOA_develop/pull/57) 팀 main 병합 후
+  `64e7d477d27dbc5ada9d1fa2420ffe9756a689f2`를 공용 서버에 배포했다. 상세 결과는 아래 참조.
 - **5단계에서 정지**. 6단계 찜·인증, 7단계 프론트 연결은 아직 진행하지 않았다.
+
+## 공용 서버 배포 완료 (로컬 검증 후 후속 실행)
+
+사용자가 SSH 비밀번호를 직접 입력해 배포 실행기를 실행하고 다음 최종 결과를 공유했다.
+
+- `STAGE5_API_DEPLOY_SUCCESS`, `SSH_EXIT=0`.
+- 새 이미지 빌드 → 별도 후보 컨테이너 기동·읽기 전용 API 검증 → 운영 API 교체 → 내부/외부 검증 순서.
+- 공개 상품 **387개** 전 페이지 ID 중복·누락 없음, 상품 상세·검색/slug 복합 필터·카테고리·대표 이미지 검증.
+- 전체 public 테이블의 배포 전후 행 수·내용 해시 일치: `DB snapshot unchanged: True`.
+- 대상은 오전에 전환한 외부 PostgreSQL `0.tcp.jp.ngrok.io:12799`, DB/사용자 `kant-moa`.
+  기존 Docker DB `kant_moa`는 대상이 아니다. migration·stamp·seed·SQL 쓰기는 실행하지 않았다.
+- 기존 원본 이미지와 업로드 볼륨을 유지했다. 기존 API 이미지에 복구용 태그를 남겼다.
+- 이전 health 전용 배포에 JWT 설정이 없어 서버에서 비밀값을 생성했다. 비밀값은 출력하거나 Git에 넣지 않았다.
+  인증 경로도 main 코드에 따라 등록됐지만 실제 계정·토큰 검증 완료를 뜻하지 않는다.
+- 실패 원인: Docker Compose와 `docker run --env-file`의 따옴표 처리 차이로 후보 API가 DB URL을 파싱하지 못했다.
+  가짜 주소를 사용하는 로컬 Docker에서 재현하고, Compose가 해석한 환경값을 후보 컨테이너에 전달하도록 수정·검증했다.
+- 서버 보고서: `/home/kant/kant-moa/stage5-64e7d47-20261027T051230Z-fcaf/report.json`.
+- 사용자 실행 결과와 별개로 PC에서 공개 `/health` 200·DB 정상, 상품/카테고리 OpenAPI 등록,
+  `/products?size=1` 200·total 387을 확인했다.
+- [외부 Swagger](https://letdown-kilometer-nutcase.ngrok-free.dev/docs).
+
+배포 실행기·진단 로그는 Git 제외 로컬 `backend/.venv/`와 서버 전용 디렉터리에 보관한다.
+서버의 기존 `app/` Git 작업 트리는 갱신하지 않고, 고정 커밋의 코드·의존성을 이미지에 반영했다.
+이후 예전 `app/`를 build context로 무조건 재빌드하면 이전 소스로 돌아갈 수 있으므로,
+다음 배포도 확정된 최신 커밋으로 소스를 준비한 뒤 진행한다.

@@ -43,7 +43,17 @@ def verify_web(base, video_path='/sources/tws.mp4'):
     return {'homepage': 200, 'login': 200, 'first_video_html_seconds': first_video}
 
 
-def main():
+def verify_chat(base):
+    request = urllib.request.Request(base + '/api/chat',
+        data=json.dumps({'message': '이미 발송된 주문도 직접 취소할 수 있나요?', 'history': []}).encode(),
+        headers={'Content-Type': 'application/json', 'ngrok-skip-browser-warning': 'true'}, method='POST')
+    with urllib.request.urlopen(request, timeout=90) as response:
+        result = json.loads(response.read())
+        assert response.status == 200 and isinstance(result.get('reply'), str) and result['reply'].strip(), 'AI reply missing'
+    return {'status': 200, 'reply_characters': len(result['reply'])}
+
+
+def main(*, require_kantbot=False):
     os.umask(0o077)
     active_path = ROOT / 'active-site.json'
     original_active = active_path.read_text()
@@ -65,8 +75,12 @@ def main():
     assert env['SITE_PORT'] == '8022'
     base = ['docker', 'compose', '-p', active['project'], '--env-file', str(env_file),
             '-f', str(base_release / 'deploy/staging/compose.site.yml')]
-    if active.get('web_override'):
-        base += ['-f', active['web_override']]
+    added_overrides = set()
+    for key in ['api_override', 'web_override']:
+        override_path = active.get(key)
+        if override_path and override_path not in added_overrides:
+            base += ['-f', override_path]
+            added_overrides.add(override_path)
     ids = {service: command(base + ['ps', '-q', service], env=env).decode().strip()
            for service in ['api', 'web', 'gateway']}
     assert all(ids.values()) and all('\n' not in cid for cid in ids.values())
@@ -75,7 +89,12 @@ def main():
     assert gateway['HostConfig']['PortBindings']['8080/tcp'] == [{'HostIp': '127.0.0.1', 'HostPort': '8022'}]
     networks = set(api['NetworkSettings']['Networks']) & set(old_web['NetworkSettings']['Networks'])
     assert len(networks) == 1
-    web_env = dict(item.split('=', 1) for item in old_web['Config']['Env'] if '=' in item)
+    original_web_env = dict(item.split('=', 1) for item in old_web['Config']['Env'] if '=' in item)
+    web_env = dict(original_web_env)
+    if env.get('GEMINI_API_KEY'):
+        web_env['GEMINI_API_KEY'] = env['GEMINI_API_KEY']
+    if require_kantbot:
+        assert web_env.get('GEMINI_API_KEY'), 'Server Gemini key required'
     assert web_env['API_INTERNAL_URL'] == 'http://api:8000'
     backup = ROOT / 'backups' / ('before-' + RELEASE.name)
     backup.mkdir(parents=True, exist_ok=False)
@@ -111,8 +130,15 @@ def main():
             except Exception:
                 if attempt == 19: raise
                 time.sleep(1)
+        if require_kantbot:
+            report['candidate_chat'] = verify_chat('http://127.0.0.1:' + port)
+        assert active_path.read_text() == original_active, 'Active deployment changed during build; candidate not promoted'
         print('Candidate web verified; replacing web service only', flush=True)
-        override.write_text(json.dumps({'services': {'web': {'image': image, 'environment': web_env}}}))
+        compose_web_env = dict(web_env)
+        if env.get('GEMINI_API_KEY'):
+            # Resolve from site.env at runtime, never duplicate the new key in the override file.
+            compose_web_env['GEMINI_API_KEY'] = '${GEMINI_API_KEY:?Set the server Gemini key}'
+        override.write_text(json.dumps({'services': {'web': {'image': image, 'environment': compose_web_env}}}))
         compose = base + ['-f', str(override)]
         changed = True
         command(compose + ['up', '-d', '--no-deps', '--no-build', '--force-recreate',
@@ -126,6 +152,8 @@ def main():
             except Exception:
                 if attempt == 9: raise
                 time.sleep(1)
+        if require_kantbot:
+            report['public_chat'] = verify_chat(PUBLIC)
         current_api = command(base + ['ps', '-q', 'api'], env=env).decode().strip()
         report['api_container_unchanged'] = current_api == ids['api'] and inspect(current_api)['Image'] == api['Image']
         assert report['api_container_unchanged']
@@ -136,11 +164,11 @@ def main():
         active.update(web_override=str(override), web_release=str(RELEASE), web_commit=manifest['commit'])
         active_path.write_text(json.dumps(active, indent=2))
         report['status'] = 'WEB_DEPLOY_SUCCESS'
-    except Exception as error:
+    except BaseException as error:
         report['error_type'] = type(error).__name__
         if changed:
             try:
-                override.write_text(json.dumps({'services': {'web': {'image': old_web['Image'], 'environment': web_env}}}))
+                override.write_text(json.dumps({'services': {'web': {'image': old_web['Image'], 'environment': original_web_env}}}))
                 command(base + ['-f', str(override), 'up', '-d', '--no-deps', '--no-build', '--force-recreate',
                                 '--wait', '--wait-timeout', '120', 'web'], env=env, timeout=180)
                 command(['docker', 'exec', ids['gateway'], 'nginx', '-s', 'reload'])
